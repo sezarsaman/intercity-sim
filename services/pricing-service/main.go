@@ -6,7 +6,6 @@ import (
 	"math"
 	"net/http"
 	"os"
-	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -32,14 +31,20 @@ type PriceResponse struct {
 	Final      float64 `json:"final"`
 }
 
+// injectable clock for tests
+var timeNow = time.Now
+
 func main() {
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8082"
-	}
+	port := getenv("PORT", "8082")
+	r := NewRouter()
+	log.Printf("[pricing-service] listening on :%s", port)
+	log.Fatal(http.ListenAndServe(":"+port, r))
+}
+
+func NewRouter() http.Handler {
 	r := chi.NewRouter()
 
-	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
+	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
 	})
@@ -53,11 +58,11 @@ func main() {
 
 		dist := haversine(req.Origin.Lat, req.Origin.Lng, req.Destination.Lat, req.Destination.Lng)
 
-		// simple pricing model
 		base := 5.0
 		perKm := 0.8
+
 		// crude surge by hour of day
-		h := time.Now().Hour()
+		h := timeNow().Hour()
 		surge := 1.0
 		if (h >= 7 && h <= 9) || (h >= 17 && h <= 20) {
 			surge = 1.3
@@ -81,10 +86,7 @@ func main() {
 		writeJSON(w, http.StatusOK, resp)
 	})
 
-	log.Printf("[pricing-service] listening on :%s", port)
-	if err := http.ListenAndServe(":"+port, r); err != nil {
-		log.Fatal(err)
-	}
+	return r
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
@@ -97,32 +99,23 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 }
 
 func haversine(lat1, lon1, lat2, lon2 float64) float64 {
-	// Earth radius km
 	const R = 6371.0
-	// deg2rad
 	dLat := (lat2 - lat1) * math.Pi / 180
 	dLon := (lon2 - lon1) * math.Pi / 180
+	lat1 = lat1 * math.Pi / 180
+	lat2 = lat2 * math.Pi / 180
 
 	a := math.Sin(dLat/2)*math.Sin(dLat/2) +
-		math.Cos(lat1*math.Pi/180)*math.Cos(lat2*math.Pi/180)*
-			math.Sin(dLon/2)*math.Sin(dLon/2)
+		math.Cos(lat1)*math.Cos(lat2)*math.Sin(dLon/2)*math.Sin(dLon/2)
 	c := 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
 	return R * c
 }
 
-func round2(v float64) float64 {
-	return math.Round(v*100) / 100
-}
+func round2(v float64) float64 { return math.Round(v*100) / 100 }
 
-// optional: parse env float
-func getenvFloat(key string, def float64) float64 {
-	v := os.Getenv(key)
-	if v == "" {
-		return def
+func getenv(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
 	}
-	f, err := strconv.ParseFloat(v, 64)
-	if err != nil {
-		return def
-	}
-	return f
+	return def
 }

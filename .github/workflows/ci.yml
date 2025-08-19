@@ -30,6 +30,12 @@ jobs:
       - name: Tidy
         run: go mod tidy
 
+      - name: Lint (golangci-lint)
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.59.1
+          args: --timeout=5m
+
       - name: Test
         run: go test ./... -v
 
