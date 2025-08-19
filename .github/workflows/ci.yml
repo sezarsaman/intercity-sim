@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Cache Go build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Tidy
+        run: go mod tidy
+
+      - name: Test
+        run: go test ./... -v
+
+  # Build and push Docker images to GHCR (only on 'main')
+  docker:
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    if: ${{ github.ref == 'refs/heads/main' }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & Push trip-service
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/trip-service/Dockerfile
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/intercity-sim/trip-service:latest
+
+      - name: Build & Push pricing-service
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/pricing-service/Dockerfile
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/intercity-sim/pricing-service:latest
+
+      - name: Build & Push api-gateway
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/api-gateway/Dockerfile
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/intercity-sim/api-gateway:latest

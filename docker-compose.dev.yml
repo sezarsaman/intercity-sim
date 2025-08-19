@@ -1,0 +1,56 @@
+services:
+  tripdb:
+    image: postgres:16-alpine
+    container_name: tripdb
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: tripdb
+    ports:
+      - "5432:5432"
+    volumes:
+      - tripdb_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d tripdb"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  trip-service:
+    build:
+      context: .
+      dockerfile: services/trip-service/Dockerfile
+    environment:
+      PORT: "8081"
+      DATABASE_URL: "postgres://postgres:postgres@tripdb:5432/tripdb?sslmode=disable"
+    depends_on:
+      tripdb:
+        condition: service_healthy
+    ports:
+      - "8081:8081"
+
+  pricing-service:
+    build:
+      context: .
+      dockerfile: services/pricing-service/Dockerfile
+    environment:
+      PORT: "8082"
+    ports:
+      - "8082:8082"
+
+  api-gateway:
+    build:
+      context: .
+      dockerfile: services/api-gateway/Dockerfile
+    environment:
+      PORT: "8080"
+      PRICING_URL: "http://pricing-service:8082"
+      TRIP_URL: "http://trip-service:8081"
+    depends_on:
+      - trip-service
+      - pricing-service
+    ports:
+      - "8080:8080"
+
+volumes:
+  tripdb_data:

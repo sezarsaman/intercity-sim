@@ -1,0 +1,28 @@
+# Binaries
+bin/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Go build cache
+*.test
+*.out
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Docker
+*.env
+.env.*
+docker-compose.override.yml
+
+# Mac
+.DS_Store
+
+# Node (future dashboard)
+node_modules/
