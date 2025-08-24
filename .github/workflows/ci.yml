@@ -15,7 +15,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.22"
+          go-version: "1.23"
 
       - name: Cache Go build
         uses: actions/cache@v4
@@ -36,8 +36,11 @@ jobs:
           version: v1.59.1
           args: --timeout=5m
 
-      - name: Test
-        run: go test ./... -v
+      - name: Run unit tests
+        run: go test -v $(go list ./... | grep -v trip-service)
+
+      - name: Run integration tests
+        run: go test -v ./services/trip-service
 
   # Build and push Docker images to GHCR (only on 'main')
   docker:
