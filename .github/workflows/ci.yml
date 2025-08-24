@@ -2,8 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: [ "main", "develop" ]
   pull_request:
+    branches: [ "main", "develop" ]
 
 jobs:
   build-and-test:
@@ -15,7 +16,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.22"
+          go-version: "1.23"
 
       - name: Cache Go build
         uses: actions/cache@v4
@@ -30,14 +31,21 @@ jobs:
       - name: Tidy
         run: go mod tidy
 
-      - name: Test
-        run: go test ./... -v
+      - name: Lint (golangci-lint)
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.59.1
+          args: --timeout=5m
 
-  # Build and push Docker images to GHCR (only on 'main')
+      - name: Run unit tests
+        run: go test -v $(go list ./... | grep -v trip-service)
+
+      - name: Run integration tests (trip-service)
+        run: go test -v ./services/trip-service
+
   docker:
     needs: build-and-test
     runs-on: ubuntu-latest
-    if: ${{ github.ref == 'refs/heads/main' }}
     permissions:
       contents: read
       packages: write
@@ -52,7 +60,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build & Push trip-service
+      # ---------- trip-service ----------
+      - name: Build & Push trip-service (main)
+        if: github.ref == 'refs/heads/main'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -60,7 +70,18 @@ jobs:
           push: true
           tags: ghcr.io/${{ github.repository_owner }}/intercity-sim/trip-service:latest
 
-      - name: Build & Push pricing-service
+      - name: Build & Push trip-service (develop)
+        if: github.ref == 'refs/heads/develop'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/trip-service/Dockerfile
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/intercity-sim/trip-service:develop
+
+      # ---------- pricing-service ----------
+      - name: Build & Push pricing-service (main)
+        if: github.ref == 'refs/heads/main'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -68,10 +89,30 @@ jobs:
           push: true
           tags: ghcr.io/${{ github.repository_owner }}/intercity-sim/pricing-service:latest
 
-      - name: Build & Push api-gateway
+      - name: Build & Push pricing-service (develop)
+        if: github.ref == 'refs/heads/develop'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/pricing-service/Dockerfile
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/intercity-sim/pricing-service:develop
+
+      # ---------- api-gateway ----------
+      - name: Build & Push api-gateway (main)
+        if: github.ref == 'refs/heads/main'
         uses: docker/build-push-action@v6
         with:
           context: .
           file: services/api-gateway/Dockerfile
           push: true
           tags: ghcr.io/${{ github.repository_owner }}/intercity-sim/api-gateway:latest
+
+      - name: Build & Push api-gateway (develop)
+        if: github.ref == 'refs/heads/develop'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/api-gateway/Dockerfile
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/intercity-sim/api-gateway:develop

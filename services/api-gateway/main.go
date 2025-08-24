@@ -44,9 +44,15 @@ func main() {
 	pricingURL := getenv("PRICING_URL", "http://localhost:8082")
 	tripURL := getenv("TRIP_URL", "http://localhost:8081")
 
+	r := NewRouter(pricingURL, tripURL)
+	log.Printf("[api-gateway] listening on :%s", port)
+	log.Fatal(http.ListenAndServe(":"+port, r))
+}
+
+func NewRouter(pricingURL, tripURL string) http.Handler {
 	r := chi.NewRouter()
 
-	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
+	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
 	})
@@ -58,7 +64,6 @@ func main() {
 			return
 		}
 
-		// 1) Ask pricing-service
 		priceReqBody, _ := json.Marshal(map[string]any{
 			"origin":       req.Origin,
 			"destination":  req.Destination,
@@ -81,7 +86,6 @@ func main() {
 			return
 		}
 
-		// 2) Create trip in trip-service with quoted price
 		tripCreate := TripCreateRequest{
 			PassengerID: req.PassengerID,
 			Origin:      req.Origin,
@@ -89,6 +93,7 @@ func main() {
 			QuotedPrice: price.Final,
 		}
 		tripBody, _ := json.Marshal(tripCreate)
+
 		tripResp, err := http.Post(tripURL+"/trips", "application/json", bytes.NewReader(tripBody))
 		if err != nil {
 			http.Error(w, "trip-service error: "+err.Error(), http.StatusBadGateway)
@@ -100,17 +105,14 @@ func main() {
 			http.Error(w, "trip-service bad status: "+string(body), http.StatusBadGateway)
 			return
 		}
-		// 3) Stream back the created trip
+
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("X-Service", "api-gateway")
 		w.WriteHeader(http.StatusCreated)
 		io.Copy(w, tripResp.Body)
 	})
 
-	log.Printf("[api-gateway] listening on :%s", port)
-	if err := http.ListenAndServe(":"+port, r); err != nil {
-		log.Fatal(err)
-	}
+	return r
 }
 
 func getenv(key, def string) string {
