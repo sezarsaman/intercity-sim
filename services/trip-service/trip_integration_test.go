@@ -48,7 +48,9 @@ func setupPostgres(t *testing.T) (func(), string) {
 
 	// cleanup
 	tearDown := func() {
-		pgC.Terminate(ctx)
+		if err := pgC.Terminate(ctx); err != nil {
+			t.Fatalf("terminate postgres container: %v", err)
+		}
 	}
 	return tearDown, dsn
 }

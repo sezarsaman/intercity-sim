@@ -9,9 +9,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/go-chi/chi/v5"
+	chi "github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+	pgx "github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -189,7 +189,9 @@ func NewRouter(pool *pgxpool.Pool) http.Handler {
 	r := chi.NewRouter()
 
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("ok"))
+		if _, err := w.Write([]byte("ok")); err != nil {
+			log.Printf("trip-service: write health response error: %v", err)
+		}
 	})
 
 	r.Get("/health/db", func(w http.ResponseWriter, r *http.Request) {
@@ -198,7 +200,9 @@ func NewRouter(pool *pgxpool.Pool) http.Handler {
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
+		if _, err := w.Write([]byte("ok")); err != nil {
+			log.Printf("trip-service: write health response error: %v", err)
+		}
 	})
 
 	r.Post("/trips", createTripHandler(pool))

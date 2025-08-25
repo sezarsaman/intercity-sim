@@ -12,14 +12,18 @@ import (
 func TestCreateTrip_Success(t *testing.T) {
 	// stub pricing-service
 	pricing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.WriteString(w, `{"distance_km":10,"base":5,"per_km":1,"surge":1,"final":15}`)
+		if _, err := io.WriteString(w, `{"distance_km":10,"base":5,"per_km":1,"surge":1,"final":15}`); err != nil {
+			t.Fatal(err)
+		}
 	}))
 	defer pricing.Close()
 
 	// stub trip-service
 	trip := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusCreated)
-		io.WriteString(w, `{"id":"t-1","passenger_id":"p-1","status":"requested","quoted_price":15}`)
+		if _, err := io.WriteString(w, `{"id":"t-1","passenger_id":"p-1","status":"requested","quoted_price":15}`); err != nil {
+			t.Fatal(err)
+		}
 	}))
 	defer trip.Close()
 
