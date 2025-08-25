@@ -8,7 +8,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/go-chi/chi/v5"
+	chi "github.com/go-chi/chi/v5"
 )
 
 type Location struct {
@@ -46,7 +46,9 @@ func NewRouter() http.Handler {
 
 	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
+		if _, err := w.Write([]byte("ok")); err != nil {
+			log.Printf("pricing-service: write health response error: %v", err)
+		}
 	})
 
 	r.Post("/price", func(w http.ResponseWriter, r *http.Request) {
@@ -95,7 +97,11 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.WriteHeader(code)
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)
-	enc.Encode(v)
+	if err := enc.Encode(v); err != nil {
+		log.Printf("pricing-service: encode error: %v", err)
+		http.Error(w, "encode error", http.StatusInternalServerError)
+		return
+	}
 }
 
 func haversine(lat1, lon1, lat2, lon2 float64) float64 {

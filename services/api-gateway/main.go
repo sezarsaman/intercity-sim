@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/go-chi/chi/v5"
+	chi "github.com/go-chi/chi/v5"
 )
 
 type Location struct {
@@ -54,7 +54,9 @@ func NewRouter(pricingURL, tripURL string) http.Handler {
 
 	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
+		if _, err := w.Write([]byte("ok")); err != nil {
+			log.Printf("api-gateway: write health response error: %v", err)
+		}
 	})
 
 	r.Post("/api/v1/trips", func(w http.ResponseWriter, r *http.Request) {
@@ -109,7 +111,11 @@ func NewRouter(pricingURL, tripURL string) http.Handler {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("X-Service", "api-gateway")
 		w.WriteHeader(http.StatusCreated)
-		io.Copy(w, tripResp.Body)
+		if _, err := io.Copy(w, tripResp.Body); err != nil {
+			log.Printf("api-gateway: proxy copy error: %v", err)
+			http.Error(w, "upstream error", http.StatusBadGateway)
+			return
+		}
 	})
 
 	return r
