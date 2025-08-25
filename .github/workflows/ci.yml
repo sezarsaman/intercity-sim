@@ -93,7 +93,7 @@ jobs:
       - name: Build & Push ${{ matrix.service }}
         uses: docker/build-push-action@v6
         with:
-          context: ./services/${{ matrix.service }}
+          context: .
           file: ./services/${{ matrix.service }}/Dockerfile
           push: true
           cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/intercity-sim/${{ matrix.service }}:buildcache
