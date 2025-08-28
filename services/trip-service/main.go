@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	pgx "github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	eventpub "github.com/sezarsaman/intercity-sim/services/trip-service/internal/events"
 )
 
 // ========== Domain Models ==========
@@ -218,7 +219,6 @@ func createTripHandler(pool *pgxpool.Pool) http.HandlerFunc {
 			http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-
 		if req.PassengerID == "" {
 			http.Error(w, "passenger_id is required", http.StatusBadRequest)
 			return
@@ -230,9 +230,20 @@ func createTripHandler(pool *pgxpool.Pool) http.HandlerFunc {
 			return
 		}
 
+		pub := eventpub.NewNoopPublisher()
+		go func(id, pid string) {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			if err := eventpub.PublishTripRequested(ctx, pub, id, pid); err != nil {
+				log.Printf("publish trip.requested error: %v", err)
+			}
+		}(t.ID, t.PassengerID)
+
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		_ = json.NewEncoder(w).Encode(t)
+		if err := json.NewEncoder(w).Encode(t); err != nil {
+			log.Printf("encode response error: %v", err)
+		}
 	}
 }
 
