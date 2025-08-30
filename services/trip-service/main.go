@@ -7,6 +7,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	chi "github.com/go-chi/chi/v5"
@@ -14,6 +16,8 @@ import (
 	pgx "github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	eventpub "github.com/sezarsaman/intercity-sim/services/trip-service/internal/events"
+	"github.com/sezarsaman/intercity-sim/services/trip-service/internal/eventsub"
+	svc "github.com/sezarsaman/intercity-sim/services/trip-service/internal/service"
 )
 
 // ========== Domain Models ==========
@@ -273,7 +277,8 @@ func getTripHandler(pool *pgxpool.Pool) http.HandlerFunc {
 // ========== Bootstrap ==========
 
 func main() {
-	ctx := context.Background()
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
 	pool, err := connectDBFromEnv(ctx)
 	if err != nil {
@@ -284,6 +289,14 @@ func main() {
 	if err := migrate(ctx, pool); err != nil {
 		log.Fatal(err)
 	}
+
+	h := svc.NewPricedHandler(pool)
+	sub := eventsub.NewNoopSubscriber()
+	go func() {
+		if err := eventsub.ConsumeTripPriced(ctx, sub, h.Handle); err != nil {
+			log.Printf("trip-service: consumer stopped: %v", err)
+		}
+	}()
 
 	port := getenv("PORT", "8081")
 	log.Printf("[trip-service] listening on :%s", port)
