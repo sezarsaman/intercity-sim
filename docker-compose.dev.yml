@@ -23,8 +23,11 @@ services:
     environment:
       PORT: "8081"
       DATABASE_URL: "postgres://postgres:postgres@tripdb:5432/tripdb?sslmode=disable"
+      RABBIT_URL: "amqp://guest:guest@rabbitmq:5672/"
     depends_on:
       tripdb:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
     ports:
       - "8081:8081"
@@ -35,8 +38,12 @@ services:
       dockerfile: services/pricing-service/Dockerfile
     environment:
       PORT: "8082"
+      RABBIT_URL: "amqp://guest:guest@rabbitmq:5672/"
     ports:
       - "8082:8082"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
 
   api-gateway:
     build:
@@ -51,6 +58,18 @@ services:
       - pricing-service
     ports:
       - "8080:8080"
+
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    container_name: intercity-sim-rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
   tripdb_data:

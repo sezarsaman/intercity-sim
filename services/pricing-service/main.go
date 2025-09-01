@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"math"
@@ -9,6 +10,15 @@ import (
 	"time"
 
 	chi "github.com/go-chi/chi/v5"
+
+	"os/signal"
+	"syscall"
+
+	"github.com/sezarsaman/intercity-sim/pkg/mq"
+	eventsub "github.com/sezarsaman/intercity-sim/services/pricing-service/internal/eventsub"
+	psvc "github.com/sezarsaman/intercity-sim/services/pricing-service/internal/service"
+
+	core "github.com/sezarsaman/intercity-sim/services/pricing-service/internal/core"
 )
 
 type Location struct {
@@ -37,6 +47,34 @@ var timeNow = time.Now
 func main() {
 	port := getenv("PORT", "8082")
 	r := NewRouter()
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	rabbitURL := getenv("RABBIT_URL", "amqp://guest:guest@rabbitmq:5672/")
+	rb, err := mq.Dial(rabbitURL)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer rb.Close()
+
+	pub, err := rb.Publisher("rides.events")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	sub, err := rb.Subscriber("rides.events", "pricing.q.trip_requested", 10)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	svc := psvc.New(pub)
+	go func() {
+		if err := eventsub.ConsumeTripRequested(ctx, sub, svc.HandleTripRequested); err != nil {
+			log.Printf("pricing-service: consumer stopped: %v", err)
+		}
+	}()
+
 	log.Printf("[pricing-service] listening on :%s", port)
 	log.Fatal(http.ListenAndServe(":"+port, r))
 }
@@ -52,40 +90,43 @@ func NewRouter() http.Handler {
 	})
 
 	r.Post("/price", func(w http.ResponseWriter, r *http.Request) {
-		var req PriceRequest
+
+		var req struct {
+			Origin struct {
+				Lat  float64 `json:"lat"`
+				Lng  float64 `json:"lng"`
+				City string  `json:"city"`
+			} `json:"origin"`
+			Destination struct {
+				Lat  float64 `json:"lat"`
+				Lng  float64 `json:"lng"`
+				City string  `json:"city"`
+			} `json:"destination"`
+			VehicleType string `json:"vehicle_type"`
+		}
+
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
 			return
 		}
 
-		dist := haversine(req.Origin.Lat, req.Origin.Lng, req.Destination.Lat, req.Destination.Lng)
+		out := core.Compute(core.Input{
+			Origin:      core.Point{Lat: req.Origin.Lat, Lng: req.Origin.Lng},
+			Destination: core.Point{Lat: req.Destination.Lat, Lng: req.Destination.Lng},
+			VehicleType: req.VehicleType,
+			Now:         time.Now(),
+		})
 
-		base := 5.0
-		perKm := 0.8
-
-		// crude surge by hour of day
-		h := timeNow().Hour()
-		surge := 1.0
-		if (h >= 7 && h <= 9) || (h >= 17 && h <= 20) {
-			surge = 1.3
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(map[string]any{
+			"distance_km": out.DistanceKm,
+			"base":        out.Base,
+			"per_km":      out.PerKm,
+			"surge":       out.Surge,
+			"final":       out.Final,
+		}); err != nil {
+			log.Printf("pricing-service: encode error: %v", err)
 		}
-		if req.VehicleType == "vip" {
-			perKm = 1.2
-			base = 8.0
-			surge += 0.1
-		}
-
-		final := (base + perKm*dist) * surge
-		final = math.Round(final*100) / 100
-
-		resp := PriceResponse{
-			DistanceKm: round2(dist),
-			Base:       base,
-			PerKm:      perKm,
-			Surge:      surge,
-			Final:      final,
-		}
-		writeJSON(w, http.StatusOK, resp)
 	})
 
 	return r

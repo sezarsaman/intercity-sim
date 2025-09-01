@@ -18,6 +18,10 @@ import (
 	eventpub "github.com/sezarsaman/intercity-sim/services/trip-service/internal/events"
 	"github.com/sezarsaman/intercity-sim/services/trip-service/internal/eventsub"
 	svc "github.com/sezarsaman/intercity-sim/services/trip-service/internal/service"
+
+	"github.com/sezarsaman/intercity-sim/pkg/mq"
+
+	ev "github.com/sezarsaman/intercity-sim/pkg/events"
 )
 
 // ========== Domain Models ==========
@@ -190,7 +194,7 @@ func getTripByID(ctx context.Context, pool *pgxpool.Pool, id string) (Trip, bool
 
 // ========== HTTP (Router + Handlers) ==========
 
-func NewRouter(pool *pgxpool.Pool) http.Handler {
+func NewRouter(pool *pgxpool.Pool, publisher mq.Publisher) http.Handler {
 	r := chi.NewRouter()
 
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -210,13 +214,13 @@ func NewRouter(pool *pgxpool.Pool) http.Handler {
 		}
 	})
 
-	r.Post("/trips", createTripHandler(pool))
+	r.Post("/trips", createTripHandler(pool, publisher))
 	r.Get("/trips/{id}", getTripHandler(pool))
 
 	return r
 }
 
-func createTripHandler(pool *pgxpool.Pool) http.HandlerFunc {
+func createTripHandler(pool *pgxpool.Pool, publisher mq.Publisher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req Trip
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -234,14 +238,21 @@ func createTripHandler(pool *pgxpool.Pool) http.HandlerFunc {
 			return
 		}
 
-		pub := eventpub.NewNoopPublisher()
-		go func(id, pid string) {
-			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		go func(t Trip) {
+			ctx2, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
-			if err := eventpub.PublishTripRequested(ctx, pub, id, pid); err != nil {
+
+			payload := ev.TripRequested{
+				TripID:      t.ID,
+				PassengerID: t.PassengerID,
+				Origin:      ev.Location{Lat: t.Origin.Lat, Lng: t.Origin.Lng, City: t.Origin.City},
+				Destination: ev.Location{Lat: t.Destination.Lat, Lng: t.Destination.Lng, City: t.Destination.City},
+				VehicleType: "",
+			}
+			if err := eventpub.PublishTripRequested(ctx2, publisher, payload); err != nil {
 				log.Printf("publish trip.requested error: %v", err)
 			}
-		}(t.ID, t.PassengerID)
+		}(*t)
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
@@ -290,8 +301,23 @@ func main() {
 		log.Fatal(err)
 	}
 
+	rabbitURL := getenv("RABBIT_URL", "amqp://guest:guest@localhost:5672/")
+	rb, err := mq.Dial(rabbitURL)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer rb.Close()
+	publisher, err := rb.Publisher("rides.events")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	sub, err := rb.Subscriber("rides.events", "trip.q.trip_priced", 10)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	h := svc.NewPricedHandler(pool)
-	sub := eventsub.NewNoopSubscriber()
 	go func() {
 		if err := eventsub.ConsumeTripPriced(ctx, sub, h.Handle); err != nil {
 			log.Printf("trip-service: consumer stopped: %v", err)
@@ -300,7 +326,8 @@ func main() {
 
 	port := getenv("PORT", "8081")
 	log.Printf("[trip-service] listening on :%s", port)
-	log.Fatal(http.ListenAndServe(":"+port, NewRouter(pool)))
+	log.Fatal(http.ListenAndServe(":"+port, NewRouter(pool, publisher)))
+
 }
 
 func getenv(key, def string) string {
