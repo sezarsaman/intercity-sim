@@ -1,12 +1,12 @@
 # Intercity Ride Dispatch & Pricing Simulator
 
-Demo-ready scaffold to showcase **Go microservices**, **Postgres**, **Docker**, and **CI**.
+Demo-ready scaffold to showcase **Go microservices**, **Postgres**, **RabbitMQ**, **Docker**, and **CI**.
 
-- `api-gateway` (HTTP): orchestrates trip creation → calls `pricing-service` → calls `trip-service`
-- `pricing-service` (HTTP): computes a simple dynamic price (distance + hour-based surge)
-- `trip-service` (HTTP + Postgres): persists trips and exposes basic CRUD
+- `api-gateway` (HTTP): accepts trip requests from clients
+- `trip-service` (HTTP + Postgres + RabbitMQ): persists trips, publishes `trip.requested`, consumes `trip.priced`
+- `pricing-service` (HTTP + RabbitMQ): consumes `trip.requested`, computes price, publishes `trip.priced`
 
-> Roadmap: RabbitMQ, Redis Geo, Observability (OTel/Prometheus/Grafana/Jaeger), K8s Helm charts, load tests, dashboard UI.
+> Roadmap: Redis Geo for driver matching, Observability (OTel/Prometheus/Grafana/Jaeger), K8s Helm charts, load tests, dashboard UI.
 
 ---
 
@@ -23,10 +23,17 @@ Demo-ready scaffold to showcase **Go microservices**, **Postgres**, **Docker**, 
   - Integration tests for `trip-service` using **testcontainers-go** (Postgres)
   - Stable GitHub Actions workflow (module download/verify + quick build before lint)
 
-- **M3 – Event-Driven (Next):**
-  - Add RabbitMQ + minimal event contracts
-  - Flow: `trip.requested → pricing → trip.priced`
-  - (Stretch for M3b) matching + Redis Geo + DLQ/retry
+- **M3 – Event-Driven (Done):**
+  - Added RabbitMQ (topic exchange: `rides.events`)
+  - Defined minimal events:
+    - `trip.requested` (published by trip-service)
+    - `trip.priced` (published by pricing-service, consumed by trip-service)
+  - End-to-end flow wired:
+    - Client → API Gateway → Trip Service → `trip.requested` → Pricing Service → `trip.priced` → Trip Service update
+
+- **(M3b – Stretch, Next):**
+  - Matching with Redis Geo
+  - Dead-letter queues / retry policies
 
 ---
 
@@ -64,14 +71,16 @@ make stop
 ## Services & Endpoints
 
 - **api-gateway** (`:8080`)
-  - `POST /api/v1/trips` → returns created trip (includes `quoted_price`)
+  - `POST /api/v1/trips` → creates trip (triggers event-driven flow)
   - `GET /health`
 - **pricing-service** (`:8082`)
-  - `POST /price` → returns `{distance_km, base, per_km, surge, final}`
+  - Consumes `trip.requested`, publishes `trip.priced`
+  - `POST /price` (direct compute, for testing)
   - `GET /health`
 - **trip-service** (`:8081`)
-  - `POST /trips` → create
+  - `POST /trips` → create trip
   - `GET /trips/{id}` → fetch by id
+  - Consumes `trip.priced` to update stored trips
   - `GET /health`
 
 ---
@@ -123,7 +132,9 @@ Tips:
   api-gateway/
   pricing-service/
   trip-service/
-pkg/                     # shared libs (future: events, mq, tracing, config)
+pkg/
+  events/             # shared event contracts (TripRequested, TripPriced, Envelope)
+  mq/                 # RabbitMQ publisher/subscriber abstractions
 docker-compose.dev.yml
 .github/workflows/ci.yml
 go.mod / go.sum
@@ -132,9 +143,9 @@ Makefile
 
 ---
 
-## Next (M3 – Event-Driven)
+## Next
 
-- Add RabbitMQ (topic exchange: `rides.events`)
-- Define minimal events: `trip.requested`, `trip.priced`
-- Implement publisher on `trip-service` (on create), consumer on `pricing-service` (compute & publish), consumer on `trip-service` (persist price)
-- Seed observability fields in event headers (`event_id`, `occurred_at`, `trace_id`)
+- Add Redis Geo for driver matching
+- Add observability stack (Prometheus, Grafana, Jaeger with OpenTelemetry)
+- Helm charts + K8s deploy
+- Retry/DLQ strategies for robustness

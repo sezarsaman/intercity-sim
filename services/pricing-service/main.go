@@ -114,7 +114,7 @@ func NewRouter() http.Handler {
 			Origin:      core.Point{Lat: req.Origin.Lat, Lng: req.Origin.Lng},
 			Destination: core.Point{Lat: req.Destination.Lat, Lng: req.Destination.Lng},
 			VehicleType: req.VehicleType,
-			Now:         time.Now(),
+			Now:         timeNow(),
 		})
 
 		w.Header().Set("Content-Type", "application/json")
@@ -132,19 +132,6 @@ func NewRouter() http.Handler {
 	return r
 }
 
-func writeJSON(w http.ResponseWriter, code int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("X-Service", "pricing-service")
-	w.WriteHeader(code)
-	enc := json.NewEncoder(w)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(v); err != nil {
-		log.Printf("pricing-service: encode error: %v", err)
-		http.Error(w, "encode error", http.StatusInternalServerError)
-		return
-	}
-}
-
 func haversine(lat1, lon1, lat2, lon2 float64) float64 {
 	const R = 6371.0
 	dLat := (lat2 - lat1) * math.Pi / 180
@@ -157,8 +144,6 @@ func haversine(lat1, lon1, lat2, lon2 float64) float64 {
 	c := 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
 	return R * c
 }
-
-func round2(v float64) float64 { return math.Round(v*100) / 100 }
 
 func getenv(key, def string) string {
 	if v := os.Getenv(key); v != "" {
