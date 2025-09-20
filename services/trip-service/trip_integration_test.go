@@ -13,6 +13,12 @@ import (
 	"net/http/httptest"
 )
 
+type nopPublisher struct{}
+
+func (nopPublisher) Publish(ctx context.Context, routingKey string, body []byte, headers map[string]any) error {
+	return nil
+}
+
 func setupPostgres(t *testing.T) (func(), string) {
 	ctx := context.Background()
 
@@ -113,7 +119,9 @@ func TestHealthDBEndpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	server := httptest.NewServer(NewRouter(pool))
+	router := NewRouter(pool, nopPublisher{})
+
+	server := httptest.NewServer(router)
 	defer server.Close()
 
 	resp, err := http.Get(server.URL + "/health/db")
