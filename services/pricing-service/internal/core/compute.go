@@ -28,12 +28,7 @@ func Compute(in Input) Output {
 
 	base := 5.0
 	perKm := 1.0
-	surge := 1.0
-	h := in.Now.UTC().Hour()
-	if h >= 17 && h <= 20 {
-		surge = 1.5
-	}
-	surge = surgeFor(in.Now, in.VehicleType)
+	surge := surgeFor(in.Now, in.VehicleType)
 	final := math.Round((base+perKm*dist)*surge*100) / 100
 
 	return Output{
