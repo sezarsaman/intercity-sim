@@ -2,6 +2,7 @@ package core
 
 import (
 	"math"
+	"strings"
 	"time"
 )
 
@@ -32,6 +33,7 @@ func Compute(in Input) Output {
 	if h >= 17 && h <= 20 {
 		surge = 1.5
 	}
+	surge = surgeFor(in.Now, in.VehicleType)
 	final := math.Round((base+perKm*dist)*surge*100) / 100
 
 	return Output{
@@ -41,6 +43,18 @@ func Compute(in Input) Output {
 		Surge:      surge,
 		Final:      final,
 	}
+}
+
+func surgeFor(now time.Time, vehicleType string) float64 {
+	h := now.Hour()
+	peak := (h >= 7 && h <= 9) || (h >= 17 && h <= 20)
+	if !peak {
+		return 1.0
+	}
+	if strings.EqualFold(vehicleType, "vip") {
+		return 1.4
+	}
+	return 1.2
 }
 
 func haversine(lat1, lon1, lat2, lon2 float64) float64 {
