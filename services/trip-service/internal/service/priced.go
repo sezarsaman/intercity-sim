@@ -18,11 +18,6 @@ func NewPricedHandler(pool *pgxpool.Pool) *PricedHandler {
 }
 
 func (h *PricedHandler) Handle(ctx context.Context, payload ev.TripPriced, eventID string) error {
-	eventID, ok := ev.EventIDFrom(ctx)
-	if !ok || eventID == "" {
-		// If the envelope was malformed we can still be safe by refusing to apply state.
-		return errors.New("missing event_id in context")
-	}
 
 	tx, err := h.pool.Begin(ctx)
 	if err != nil {
@@ -31,6 +26,9 @@ func (h *PricedHandler) Handle(ctx context.Context, payload ev.TripPriced, event
 	defer tx.Rollback(ctx) // nolint:errcheck
 
 	// 1) Inbox dedupe (idempotency)
+	if eventID == "" {
+		return errors.New("missing event_id in context")
+	}
 	tag, err := tx.Exec(ctx,
 		`INSERT INTO event_inbox(event_id) VALUES ($1) ON CONFLICT DO NOTHING`,
 		eventID,

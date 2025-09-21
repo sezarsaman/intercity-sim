@@ -3,7 +3,6 @@ package eventsub
 import (
 	"context"
 	"encoding/json"
-	"log"
 
 	ev "github.com/sezarsaman/intercity-sim/pkg/events"
 	"github.com/sezarsaman/intercity-sim/pkg/mq"
@@ -15,7 +14,6 @@ func ConsumeTripPriced(ctx context.Context, sub mq.Subscriber, on func(context.C
 		if err := json.Unmarshal(body, &env); err != nil {
 			return err
 		}
-		log.Printf("ConsumeTripPriced event ID: %v", env.EventID)
 		return on(c, env.Payload, env.EventID)
 	})
 }

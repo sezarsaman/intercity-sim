@@ -5,81 +5,26 @@ import amqp "github.com/rabbitmq/amqp091-go"
 const (
 	ExchangeEvents = "rides.events"
 
-	QueueTripRequested   = "trip.q.trip_requested"
+	// Main queues
+	QueueTripRequested = "pricing.q.trip_requested"
+	QueueTripPriced    = "trip.q.trip_priced"
+
+	// Retry & DLQ
 	QueueTripRequestedR  = "trip.q.trip_requested.retry"
 	QueueTripRequestedDL = "trip.q.trip_requested.dlq"
 
-	QueueTripPriced   = "trip.q.trip_priced"
 	QueueTripPricedR  = "trip.q.trip_priced.retry"
 	QueueTripPricedDL = "trip.q.trip_priced.dlq"
 
-	rkTripRequested = "trip.requested"
-	rkTripPriced    = "trip.priced"
+	// Routing keys
+	rkTripRequested      = "trip.requested"
+	rkTripRequestedRetry = "trip.requested.retry"
+	rkTripRequestedDLQ   = "trip.requested.dlq"
+
+	rkTripPriced      = "trip.priced"
+	rkTripPricedRetry = "trip.priced.retry"
+	rkTripPricedDLQ   = "trip.priced.dlq"
 )
-
-// DeclareTopology declares exchanges/queues/bindings including retry & DLQ.
-// Uses classic-TTL-queue pattern (no plugins required).
-func DeclareTopology(ch *amqp.Channel) error {
-	// exchange
-	if err := ch.ExchangeDeclare(ExchangeEvents, "topic", true, false, false, false, nil); err != nil {
-		return err
-	}
-
-	// helper
-	declare := func(queue, deadLetter string, ttl int32, bindKey string) error {
-		args := amqp.Table{}
-		if deadLetter != "" {
-			args["x-dead-letter-exchange"] = ExchangeEvents
-			args["x-dead-letter-routing-key"] = bindKey
-		}
-		if ttl > 0 {
-			args["x-message-ttl"] = int32(ttl)
-		}
-		if _, err := ch.QueueDeclare(queue, true, false, false, false, args); err != nil {
-			return err
-		}
-		return nil
-	}
-	bind := func(queue, key string) error {
-		return ch.QueueBind(queue, key, ExchangeEvents, false, nil)
-	}
-
-	// trip.requested (→ pricing)
-	if err := declare(QueueTripRequestedDL, "", 0, rkTripRequested); err != nil {
-		return err
-	}
-	if err := declare(QueueTripRequestedR, QueueTripRequested, 15000, rkTripRequested); err != nil {
-		return err
-	} // 15s backoff
-	if err := declare(QueueTripRequested, QueueTripRequestedR, 0, rkTripRequested); err != nil {
-		return err
-	}
-	if err := bind(QueueTripRequested, rkTripRequested); err != nil {
-		return err
-	}
-	if err := bind(QueueTripRequestedR, rkTripRequested); err != nil {
-		return err
-	}
-
-	// trip.priced (→ trip-service)
-	if err := declare(QueueTripPricedDL, "", 0, rkTripPriced); err != nil {
-		return err
-	}
-	if err := declare(QueueTripPricedR, QueueTripPriced, 15000, rkTripPriced); err != nil {
-		return err
-	}
-	if err := declare(QueueTripPriced, QueueTripPricedR, 0, rkTripPriced); err != nil {
-		return err
-	}
-	if err := bind(QueueTripPriced, rkTripPriced); err != nil {
-		return err
-	}
-	if err := bind(QueueTripPricedR, rkTripPriced); err != nil {
-		return err
-	}
-
-	return nil
-}
 
 func BootstrapTopology(amqpURL string) error {
 	conn, err := amqp.Dial(amqpURL)
@@ -94,5 +39,89 @@ func BootstrapTopology(amqpURL string) error {
 	}
 	defer ch.Close()
 
-	return DeclareTopology(ch)
+	return EnsureTopology(ch)
+}
+
+func EnsureTopology(ch *amqp.Channel) error {
+	// exchange
+	if err := ch.ExchangeDeclare(ExchangeEvents, "topic", true, false, false, false, nil); err != nil {
+		return err
+	}
+
+	// helpers
+	bind := func(q, key string) error {
+		return ch.QueueBind(q, key, ExchangeEvents, false, nil)
+	}
+	declare := func(name string, args amqp.Table) error {
+		_, err := ch.QueueDeclare(name, true, false, false, false, args)
+		return err
+	}
+
+	// --- trip.requested flow (publisher → pricing) ---
+
+	// main queue: bind to event key; DLX → retry key
+	if err := declare(QueueTripRequested, amqp.Table{
+		"x-dead-letter-exchange":    ExchangeEvents,
+		"x-dead-letter-routing-key": rkTripRequestedRetry,
+	}); err != nil {
+		return err
+	}
+	if err := bind(QueueTripRequested, rkTripRequested); err != nil {
+		return err
+	}
+
+	// retry queue: TTL; DLX → original event key; **bind only to retry key**
+	if err := declare(QueueTripRequestedR, amqp.Table{
+		"x-message-ttl":             int32(15000),
+		"x-dead-letter-exchange":    ExchangeEvents,
+		"x-dead-letter-routing-key": rkTripRequested,
+	}); err != nil {
+		return err
+	}
+	if err := bind(QueueTripRequestedR, rkTripRequestedRetry); err != nil {
+		return err
+	}
+
+	// DLQ: bind only to DLQ key
+	if err := declare(QueueTripRequestedDL, nil); err != nil {
+		return err
+	}
+	if err := bind(QueueTripRequestedDL, rkTripRequestedDLQ); err != nil {
+		return err
+	}
+
+	// --- trip.priced flow (publisher → trip-service) ---
+
+	// main
+	if err := declare(QueueTripPriced, amqp.Table{
+		"x-dead-letter-exchange":    ExchangeEvents,
+		"x-dead-letter-routing-key": rkTripPricedRetry,
+	}); err != nil {
+		return err
+	}
+	if err := bind(QueueTripPriced, rkTripPriced); err != nil {
+		return err
+	}
+
+	// retry (TTL back to main)
+	if err := declare(QueueTripPricedR, amqp.Table{
+		"x-message-ttl":             int32(15000),
+		"x-dead-letter-exchange":    ExchangeEvents,
+		"x-dead-letter-routing-key": rkTripPriced,
+	}); err != nil {
+		return err
+	}
+	if err := bind(QueueTripPricedR, rkTripPricedRetry); err != nil {
+		return err
+	}
+
+	// DLQ
+	if err := declare(QueueTripPricedDL, nil); err != nil {
+		return err
+	}
+	if err := bind(QueueTripPricedDL, rkTripPricedDLQ); err != nil {
+		return err
+	}
+
+	return nil
 }
