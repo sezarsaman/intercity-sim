@@ -52,6 +52,11 @@ func main() {
 	defer stop()
 
 	rabbitURL := getenv("RABBIT_URL", "amqp://guest:guest@rabbitmq:5672/")
+
+	if err := mq.BootstrapTopology(rabbitURL); err != nil {
+		log.Fatalf("pricing-service: topology bootstrap failed: %v", err)
+	}
+
 	rb, err := mq.Dial(rabbitURL)
 	if err != nil {
 		log.Fatal(err)
@@ -63,7 +68,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	sub, err := rb.Subscriber("rides.events", "pricing.q.trip_requested", 10)
+	sub, err := rb.Subscriber(mq.ExchangeEvents, mq.QueueTripRequested, 10)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -77,6 +82,7 @@ func main() {
 
 	log.Printf("[pricing-service] listening on :%s", port)
 	log.Fatal(http.ListenAndServe(":"+port, r))
+
 }
 
 func NewRouter() http.Handler {

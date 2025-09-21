@@ -34,10 +34,9 @@ func (r *Rabbit) Publisher(exchange string) (Publisher, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := ch.ExchangeDeclare(exchange, "topic", true, false, false, false, nil); err != nil {
-		_ = ch.Close()
-		return nil, err
-	}
+
+	// Do not re-declare topology here; assume it’s bootstrapped once at startup.
+
 	return &rabbitPublisher{ch: ch, exchange: exchange}, nil
 }
 
@@ -69,11 +68,9 @@ func (r *Rabbit) Subscriber(exchange, queue string, prefetch int) (Subscriber, e
 	if err != nil {
 		return nil, err
 	}
-	if err := ch.ExchangeDeclare(exchange, "topic", true, false, false, false, nil); err != nil {
-		_ = ch.Close()
-		return nil, err
-	}
-	if _, err := ch.QueueDeclare(queue, true, false, false, false, nil); err != nil {
+	// Don’t (re)declare queues here with empty args (would clobber DLX settings).
+	// Only assert that the queue already exists with the same properties:
+	if _, err := ch.QueueDeclarePassive(queue, true, false, false, false, nil); err != nil {
 		_ = ch.Close()
 		return nil, err
 	}
@@ -87,6 +84,8 @@ func (r *Rabbit) Subscriber(exchange, queue string, prefetch int) (Subscriber, e
 }
 
 func (s *rabbitSubscriber) Consume(ctx context.Context, bindingKey string, handler func(ctx context.Context, body []byte, headers map[string]any) error) error {
+	// Binding here is idempotent; keep it if you don’t pre-bind during topology bootstrap.
+	// If you already bind in topology, this will be a no-op:
 	if err := s.ch.QueueBind(s.queue, bindingKey, s.exchange, false, nil); err != nil {
 		return err
 	}
@@ -107,7 +106,8 @@ func (s *rabbitSubscriber) Consume(ctx context.Context, bindingKey string, handl
 				h[k] = v
 			}
 			if err := handler(ctx, d.Body, h); err != nil {
-				_ = d.Nack(false, true)
+				// Do not requeue; let DLX/retry handle it as per queue args.
+				_ = d.Nack(false, false)
 			} else {
 				_ = d.Ack(false)
 			}

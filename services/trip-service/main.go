@@ -114,7 +114,11 @@ func migrate(ctx context.Context, pool *pgxpool.Pool) error {
 
 		CREATE INDEX IF NOT EXISTS idx_trips_passenger ON trips (passenger_id);
 		CREATE INDEX IF NOT EXISTS idx_trips_created_at ON trips (created_at DESC);
-		`
+
+		CREATE TABLE IF NOT EXISTS event_inbox (
+		event_id   TEXT PRIMARY KEY,
+		seen_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);`
 	if _, err := pool.Exec(ctx, ddl); err != nil {
 		return fmt.Errorf("migrate: exec DDL: %w", err)
 	}
@@ -302,6 +306,11 @@ func main() {
 	}
 
 	rabbitURL := getenv("RABBIT_URL", "amqp://guest:guest@localhost:5672/")
+
+	if err := mq.BootstrapTopology(rabbitURL); err != nil {
+		log.Fatalf("trip-service: topology bootstrap failed: %v", err)
+	}
+
 	rb, err := mq.Dial(rabbitURL)
 	if err != nil {
 		log.Fatal(err)
@@ -312,7 +321,8 @@ func main() {
 		log.Fatal(err)
 	}
 
-	sub, err := rb.Subscriber("rides.events", "trip.q.trip_priced", 10)
+	sub, err := rb.Subscriber(mq.ExchangeEvents, mq.QueueTripPriced, 10)
+
 	if err != nil {
 		log.Fatal(err)
 	}
