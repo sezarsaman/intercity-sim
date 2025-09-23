@@ -19,3 +19,12 @@ type TripPriced struct {
 	FinalPrice float64 `json:"final_price"`
 	Surge      float64 `json:"surge"`
 }
+
+type TripMatched struct {
+	TripID     string  `json:"trip_id"`
+	DriverID   string  `json:"driver_id"`
+	DriverLat  float64 `json:"driver_lat"`
+	DriverLng  float64 `json:"driver_lng"`
+	Distance   float64 `json:"distance_km"`
+	ETASeconds int     `json:"eta_seconds"`
+}
