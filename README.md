@@ -5,8 +5,9 @@ Demo-ready scaffold to showcase **Go microservices**, **Postgres**, **RabbitMQ**
 - `api-gateway` (HTTP): accepts trip requests from clients
 - `trip-service` (HTTP + Postgres + RabbitMQ): persists trips, publishes `trip.requested`, consumes `trip.priced`
 - `pricing-service` (HTTP + RabbitMQ): consumes `trip.requested`, computes price, publishes `trip.priced`
+- `matching-service` (HTTP + Redis Geo + RabbitMQ): consumes `trip.priced`, finds nearby drivers, publishes `trip.matched`
 
-> Roadmap: Redis Geo for driver matching, Observability (OTel/Prometheus/Grafana/Jaeger), K8s Helm charts, load tests, dashboard UI.
+> Roadmap: Observability (OTel/Prometheus/Grafana/Jaeger), K8s Helm charts, load tests, dashboard UI.
 
 ---
 
@@ -31,9 +32,11 @@ Demo-ready scaffold to showcase **Go microservices**, **Postgres**, **RabbitMQ**
   - End-to-end flow wired:
     - Client → API Gateway → Trip Service → `trip.requested` → Pricing Service → `trip.priced` → Trip Service update
 
-- **(M3b – Stretch, Next):**
-  - Matching with Redis Geo
-  - Dead-letter queues / retry policies
+- **M3b – Matching (Done):**
+  - Added Redis Geo + new `matching-service`
+  - Defined `trip.matched` event
+  - Flow: `trip.priced → matching-service → trip.matched → trip-service`
+  - Retry/DLQ queues wired for robustness
 
 ---
 
@@ -80,7 +83,11 @@ make stop
 - **trip-service** (`:8081`)
   - `POST /trips` → create trip
   - `GET /trips/{id}` → fetch by id
-  - Consumes `trip.priced` to update stored trips
+  - Consumes `trip.priced` and `trip.matched` to update stored trips
+  - `GET /health`
+- **matching-service** (`:8083`)
+  - Consumes `trip.priced`, publishes `trip.matched`
+  - Uses Redis Geo to pick drivers
   - `GET /health`
 
 ---
@@ -118,6 +125,7 @@ Multi-stage builds per service. CI pushes:
 - `ghcr.io/<org-or-user>/intercity-sim/api-gateway:<tag>`
 - `ghcr.io/<org-or-user>/intercity-sim/pricing-service:<tag>`
 - `ghcr.io/<org-or-user>/intercity-sim/trip-service:<tag>`
+- `ghcr.io/<org-or-user>/intercity-sim/matching-service:<tag>`
 
 Tips:
 - Builder stage downloads modules first for better cache.
@@ -132,8 +140,9 @@ Tips:
   api-gateway/
   pricing-service/
   trip-service/
+  matching-service/
 pkg/
-  events/             # shared event contracts (TripRequested, TripPriced, Envelope)
+  events/             # shared event contracts (TripRequested, TripPriced, TripMatched, Envelope)
   mq/                 # RabbitMQ publisher/subscriber abstractions
 docker-compose.dev.yml
 .github/workflows/ci.yml
@@ -145,7 +154,8 @@ Makefile
 
 ## Next
 
-- Add Redis Geo for driver matching
+- Extend matching logic (register/unregister drivers, smarter selection)
 - Add observability stack (Prometheus, Grafana, Jaeger with OpenTelemetry)
 - Helm charts + K8s deploy
 - Retry/DLQ strategies for robustness
+- Load tests + simple dashboard UI

@@ -24,6 +24,16 @@ const (
 	rkTripPriced      = "trip.priced"
 	rkTripPricedRetry = "trip.priced.retry"
 	rkTripPricedDLQ   = "trip.priced.dlq"
+
+	QueueMatchingTripPriced   = "matching.q.trip_priced"
+	QueueMatchingTripPricedR  = "matching.q.trip_priced.retry"
+	QueueMatchingTripPricedDL = "matching.q.trip_priced.dlq"
+
+	QueueTripMatched   = "trip.q.trip_matched"
+	QueueTripMatchedR  = "trip.q.trip_matched.retry"
+	QueueTripMatchedDL = "trip.q.trip_matched.dlq"
+
+	rkTripMatched = "trip.matched"
 )
 
 func BootstrapTopology(amqpURL string) error {
@@ -91,6 +101,56 @@ func EnsureTopology(ch *amqp.Channel) error {
 	}
 
 	// --- trip.priced flow (publisher → trip-service) ---
+
+	// --- matching consumes trip.priced ---
+	if err := declare(QueueMatchingTripPricedDL, amqp.Table{
+		// DLQ has no DLX
+	}); err != nil {
+		return err
+	}
+	if err := declare(QueueMatchingTripPricedR, amqp.Table{
+		"x-message-ttl":             int32(15000),   // 15s backoff
+		"x-dead-letter-exchange":    ExchangeEvents, // send back to events exchange
+		"x-dead-letter-routing-key": rkTripPriced,   // route back with same key
+	}); err != nil {
+		return err
+	}
+	if err := declare(QueueMatchingTripPriced, amqp.Table{
+		"x-dead-letter-exchange":    ExchangeEvents,
+		"x-dead-letter-routing-key": rkTripPriced,
+	}); err != nil {
+		return err
+	}
+	if err := bind(QueueMatchingTripPriced, rkTripPriced); err != nil {
+		return err
+	}
+	if err := bind(QueueMatchingTripPricedR, rkTripPriced); err != nil {
+		return err
+	}
+
+	// --- trip-service consumes trip.matched ---
+	if err := declare(QueueTripMatchedDL, amqp.Table{}); err != nil {
+		return err
+	}
+	if err := declare(QueueTripMatchedR, amqp.Table{
+		"x-message-ttl":             int32(15000),
+		"x-dead-letter-exchange":    ExchangeEvents,
+		"x-dead-letter-routing-key": rkTripMatched,
+	}); err != nil {
+		return err
+	}
+	if err := declare(QueueTripMatched, amqp.Table{
+		"x-dead-letter-exchange":    ExchangeEvents,
+		"x-dead-letter-routing-key": rkTripMatched,
+	}); err != nil {
+		return err
+	}
+	if err := bind(QueueTripMatched, rkTripMatched); err != nil {
+		return err
+	}
+	if err := bind(QueueTripMatchedR, rkTripMatched); err != nil {
+		return err
+	}
 
 	// main
 	if err := declare(QueueTripPriced, amqp.Table{

@@ -115,10 +115,19 @@ func migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		CREATE INDEX IF NOT EXISTS idx_trips_passenger ON trips (passenger_id);
 		CREATE INDEX IF NOT EXISTS idx_trips_created_at ON trips (created_at DESC);
 
+		ALTER TABLE trips
+  		ADD COLUMN IF NOT EXISTS driver_id   text,
+		ADD COLUMN IF NOT EXISTS driver_lat  DOUBLE PRECISION,
+		ADD COLUMN IF NOT EXISTS driver_lng  DOUBLE PRECISION,
+  		ADD COLUMN IF NOT EXISTS eta_seconds integer,
+  		ADD CONSTRAINT trips_status_check
+    	CHECK (status IN ('requested','priced','matched'));
+		
 		CREATE TABLE IF NOT EXISTS event_inbox (
 		event_id   TEXT PRIMARY KEY,
 		seen_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		);`
+
 	if _, err := pool.Exec(ctx, ddl); err != nil {
 		return fmt.Errorf("migrate: exec DDL: %w", err)
 	}
@@ -331,6 +340,19 @@ func main() {
 	go func() {
 		if err := eventsub.ConsumeTripPriced(ctx, sub, h.Handle); err != nil {
 			log.Printf("trip-service: consumer stopped: %v", err)
+		}
+	}()
+
+	// subMatch subscribes to trip.matched (queue name is just an example)
+	subMatch, err := rb.Subscriber("rides.events", "trip.q.trip_matched", 10)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	mh := svc.NewMatchedHandler(pool)
+	go func() {
+		if err := eventsub.ConsumeTripMatched(ctx, subMatch, mh.HandleTripMatched); err != nil {
+			log.Printf("trip-service: matched consumer stopped: %v", err)
 		}
 	}()
 
