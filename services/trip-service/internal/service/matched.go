@@ -3,7 +3,9 @@ package service
 import (
 	"context"
 	"fmt"
+	"log"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	ev "github.com/sezarsaman/intercity-sim/pkg/events"
 )
@@ -21,7 +23,14 @@ func (h *MatchedHandler) HandleTripMatched(ctx context.Context, msg ev.TripMatch
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+
+	defer func() {
+		// Rollback only if not already committed
+		if err := tx.Rollback(ctx); err != nil && err != pgx.ErrTxClosed {
+			// log it, but don't override the main error
+			log.Printf("trip-service: rollback error: %v", err)
+		}
+	}()
 
 	// idempotency inbox
 	if _, err := tx.Exec(ctx,
